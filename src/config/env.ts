@@ -12,6 +12,7 @@ export interface AppEnv {
   DEV_WEBHOOK_SECRET: string;
   OTP_PEPPER: string;
   WEB_ORIGIN: string;
+  API_ORIGIN?: string;
   RAZORPAY_KEY_ID?: string;
   RAZORPAY_KEY_SECRET?: string;
   RAZORPAY_WEBHOOK_SECRET?: string;
@@ -68,6 +69,7 @@ export function validateEnv(config: Record<string, unknown>): AppEnv {
     DEV_WEBHOOK_SECRET: String(config.DEV_WEBHOOK_SECRET),
     OTP_PEPPER: String(config.OTP_PEPPER),
     WEB_ORIGIN: String(config.WEB_ORIGIN || 'http://localhost:5173'),
+    API_ORIGIN: config.API_ORIGIN ? String(config.API_ORIGIN).replace(/\/$/, '') : undefined,
     RAZORPAY_KEY_ID: config.RAZORPAY_KEY_ID ? String(config.RAZORPAY_KEY_ID) : undefined,
     RAZORPAY_KEY_SECRET: config.RAZORPAY_KEY_SECRET ? String(config.RAZORPAY_KEY_SECRET) : undefined,
     RAZORPAY_WEBHOOK_SECRET: config.RAZORPAY_WEBHOOK_SECRET ? String(config.RAZORPAY_WEBHOOK_SECRET) : undefined,

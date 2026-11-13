@@ -15,6 +15,7 @@ import { AuthUser } from '../common/interfaces/auth-user';
 import { toPublic } from '../common/utils/public';
 import { ActivationService } from '../memberships/activation.service';
 import { CreateOrderDto, DevConfirmDto, RazorpayConfirmDto } from './payments.dto';
+import { callbackOrigin } from './callback-origin';
 import { PaymentGateway, RazorpayPaymentGateway } from './payment.gateway';
 
 @Injectable()
@@ -61,8 +62,12 @@ export class PaymentsService {
   }
 
   callbackUrl(requestOrigin?: string) {
-    const fallback = `http://127.0.0.1:${this.config.get<number>('PORT') || 3000}`;
-    const origin = this.allowedOrigin(requestOrigin) || fallback;
+    const origin = callbackOrigin({
+      apiOrigin: this.config.get<string>('API_ORIGIN'),
+      renderExternalUrl: process.env.RENDER_EXTERNAL_URL,
+      requestOrigin,
+      port: this.config.get<number>('PORT') || 3000,
+    });
     return `${origin}/api/v1/payments/razorpay/callback`;
   }
 
@@ -124,7 +129,13 @@ export class PaymentsService {
       return undefined;
     }
     const web = this.config.get<string>('WEB_ORIGIN');
-    const allowed = new Set(['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://localhost:3000']);
+    const allowed = new Set([
+      'http://127.0.0.1:5173',
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'http://localhost:3000',
+      'https://stylio-frontend.vercel.app',
+    ]);
     if (web) allowed.add(web.replace(/\/$/, ''));
     return allowed.has(origin) ? origin : undefined;
   }
