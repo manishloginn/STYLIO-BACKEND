@@ -1,0 +1,13 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = '3000';
+process.env.MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/stylio-placeholder';
+process.env.JWT_ACCESS_SECRET = 'test-access-secret-0123456789';
+process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-0123456789';
+process.env.JWT_ACCESS_TTL = '15m';
+process.env.JWT_REFRESH_TTL = '7d';
+process.env.OTP_PROVIDER = 'dev';
+process.env.PAYMENT_PROVIDER = 'dev';
+process.env.DEV_OTP_CODE = '482913';
+process.env.DEV_WEBHOOK_SECRET = 'test-webhook-secret';
+process.env.OTP_PEPPER = 'test-pepper';
+process.env.WEB_ORIGIN = 'http://localhost:5173';
