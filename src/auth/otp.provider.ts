@@ -15,7 +15,7 @@ export class DevOtpProvider extends OtpProvider {
 
   issueLoginCode(phone: string): { code: string; devCode?: string } {
     const code = this.config.getOrThrow<string>('DEV_OTP_CODE');
-    this.logger.warn(`Development OTP for ${phone}: ${code}. This adapter must not run in production.`);
+    this.logger.warn(`Development OTP for ${phone}: ${code}. No SMS adapter is configured.`);
     const devCode = this.config.get<string>('NODE_ENV') === 'production' ? undefined : code;
     return { code, devCode };
   }

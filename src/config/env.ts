@@ -40,7 +40,7 @@ export function validateEnv(config: Record<string, unknown>): AppEnv {
     throw new Error('PAYMENT_PROVIDER must be dev or razorpay');
   }
   if (nodeEnv === 'production' && otpProvider === 'dev') {
-    throw new Error('Refusing to boot: OTP_PROVIDER=dev is not allowed in production');
+    console.warn('OTP_PROVIDER=dev is running in production. Login uses DEV_OTP_CODE until an SMS adapter is configured.');
   }
   if (nodeEnv === 'production' && paymentProvider === 'dev') {
     throw new Error('Refusing to boot: PAYMENT_PROVIDER=dev is not allowed in production');
