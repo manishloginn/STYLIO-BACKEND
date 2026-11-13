@@ -2,7 +2,7 @@ import { MongoDoc } from '../common/interfaces/mongo-doc';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { PaymentStatus, SalonStatus } from '../common/enums';
+import { MembershipStatus, PaymentStatus, SalonStatus } from '../common/enums';
 import { AuthUser } from '../common/interfaces/auth-user';
 import { SalonAccessService } from '../salons/salon-access.service';
 
@@ -44,15 +44,16 @@ export class AnalyticsService {
   async salon(user: AuthUser, salonId: string, from?: string, to?: string) {
     await this.access.assert(user, salonId, 'reports:read');
     const bounds = this.bounds(from, to);
-    const [sales, activeMemberships, redemptions, commission, payouts] = await Promise.all([
+    const [sales, activeMemberships, totalMemberships, redemptions, commission, payouts] = await Promise.all([
       this.payments.aggregate([
         { $match: { salonId, status: PaymentStatus.PAID, ...(bounds ? { paidAt: bounds } : {}) } },
         { $group: { _id: '$gateway', total: { $sum: '$amount' }, count: { $sum: 1 } } },
       ]),
-      this.memberships.countDocuments({ salonId, status: 'ACTIVE', ...(bounds ? { createdAt: bounds } : {}) }),
-      this.redemptions.countDocuments({ salonId, status: 'COMPLETED', ...(bounds ? { redeemedAt: bounds } : {}) }),
+      this.memberships.countDocuments({ salonId, status: MembershipStatus.ACTIVE }),
+      this.memberships.countDocuments({ salonId }),
+      this.redemptions.countDocuments({ salonId, status: 'COMPLETED' }),
       this.commissions.aggregate([
-        { $match: { salonId, ...(bounds ? { createdAt: bounds } : {}) } },
+        { $match: { salonId } },
         {
           $group: {
             _id: null,
@@ -61,7 +62,7 @@ export class AnalyticsService {
           },
         },
       ]),
-      this.payouts.find({ salonId, status: 'RECORDED', ...(bounds ? { createdAt: bounds } : {}) }).lean(),
+      this.payouts.find({ salonId, status: 'RECORDED' }).lean(),
     ]);
     const stylioRows = sales.filter((row) => row._id !== 'DIRECT');
     const direct = sales.find((row) => row._id === 'DIRECT');
@@ -71,6 +72,7 @@ export class AnalyticsService {
       stylioSalesCount: stylioRows.reduce((sum, row) => sum + row.count, 0),
       directSalesPaise: direct?.total ?? 0,
       activeMemberships,
+      totalMemberships,
       redemptions,
       commissionPaise: commission[0]?.commission ?? 0,
       salonPayablePaise: commission[0]?.payable ?? 0,
