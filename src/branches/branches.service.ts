@@ -64,7 +64,13 @@ export class BranchesService {
   }
 
   async listPending() {
-    const rows = await this.branches.find({ status: BranchStatus.PENDING }).sort({ createdAt: -1 }).lean();
+    return this.adminList(BranchStatus.PENDING);
+  }
+
+  async adminList(status?: string) {
+    const filter: Record<string, unknown> = {};
+    if (status) filter.status = status;
+    const rows = await this.branches.find(filter).sort({ createdAt: -1 }).limit(200).lean();
     return rows.map((row) => toPublic(row));
   }
 

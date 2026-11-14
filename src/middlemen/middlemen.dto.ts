@@ -34,6 +34,10 @@ export class CreateMiddlemanDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  salonId?: string;
 }
 
 export class UpdateMiddlemanDto {

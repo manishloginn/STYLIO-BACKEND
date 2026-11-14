@@ -13,6 +13,7 @@ import { pageArgs, PageQueryDto } from '../common/dto/page-query.dto';
 import { PaymentStatus, Role } from '../common/enums';
 import { AuthUser } from '../common/interfaces/auth-user';
 import { toPublic } from '../common/utils/public';
+import { escapeRegex } from '../common/utils/regex';
 import { ActivationService } from '../memberships/activation.service';
 import { CreateOrderDto, DevConfirmDto, RazorpayConfirmDto } from './payments.dto';
 import { callbackOrigin } from './callback-origin';
@@ -23,6 +24,9 @@ export class PaymentsService {
   constructor(
     @InjectModel('Payment') private readonly payments: Model<MongoDoc>,
     @InjectModel('MembershipPlan') private readonly plans: Model<MongoDoc>,
+    @InjectModel('User') private readonly users: Model<MongoDoc>,
+    @InjectModel('Salon') private readonly salons: Model<MongoDoc>,
+    @InjectModel('Commission') private readonly commissions: Model<MongoDoc>,
     private readonly gateway: PaymentGateway,
     private readonly activation: ActivationService,
     private readonly config: ConfigService,
@@ -208,18 +212,91 @@ export class PaymentsService {
 
   async adminList(query: PageQueryDto) {
     const { page, limit, skip } = pageArgs(query);
+    const filter = await this.adminFilter(query);
+    const [items, total, matched] = await Promise.all([
+      this.payments.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      this.payments.countDocuments(filter),
+      this.payments.find(filter).select('_id amount status').lean(),
+    ]);
+    const userIds = [...new Set(items.map((row) => row.userId).filter(Boolean))];
+    const salonIds = [...new Set(items.map((row) => row.salonId).filter(Boolean))];
+    const planIds = [...new Set(items.map((row) => row.planId).filter(Boolean))];
+    const paymentIds = [...new Set([...items.map((row) => row._id), ...matched.map((row) => row._id)])];
+    const [people, shops, plans, cuts] = await Promise.all([
+      this.users.find({ _id: { $in: userIds } }).select('name phone').lean(),
+      this.salons.find({ _id: { $in: salonIds } }).select('name city').lean(),
+      this.plans.find({ _id: { $in: planIds } }).select('name').lean(),
+      this.commissions.find({ paymentId: { $in: paymentIds } }).lean(),
+    ]);
+    const users = new Map(people.map((person) => [person._id, person]));
+    const salons = new Map(shops.map((salon) => [salon._id, salon]));
+    const planNames = new Map(plans.map((plan) => [plan._id, plan.name]));
+    const cutsByPayment = new Map(cuts.map((cut) => [cut.paymentId, cut]));
+    const totals = matched.reduce(
+      (acc, row) => {
+        if (row.status !== PaymentStatus.PAID) return acc;
+        acc.paidPaise += row.amount;
+        const cut = cutsByPayment.get(row._id);
+        if (cut) {
+          acc.commissionPaise += cut.commissionPaise - cut.reversedPaise;
+          acc.payoutPaise += cut.salonPayablePaise;
+        } else {
+          acc.payoutPaise += row.amount;
+        }
+        return acc;
+      },
+      { paidPaise: 0, commissionPaise: 0, payoutPaise: 0 },
+    );
+    return {
+      data: items.map((row) => {
+        const customer = users.get(row.userId);
+        const salon = salons.get(row.salonId);
+        const cut = cutsByPayment.get(row._id);
+        const paid = row.status === PaymentStatus.PAID;
+        return {
+          ...this.present(row),
+          customer: customer ? { id: customer._id, name: customer.name, phone: customer.phone } : null,
+          salon: salon ? { id: salon._id, name: salon.name, city: salon.city } : null,
+          planName: planNames.get(row.planId) ?? null,
+          commissionPaise: cut ? cut.commissionPaise - cut.reversedPaise : paid ? 0 : null,
+          payoutPaise: cut ? cut.salonPayablePaise : paid ? row.amount : null,
+          rateBps: cut?.rateBps ?? null,
+          settled: Boolean(cut?.payoutId),
+        };
+      }),
+      meta: { page, limit, total, ...totals },
+    };
+  }
+
+  private async adminFilter(query: PageQueryDto) {
     const filter: Record<string, unknown> = {};
     if (query.status) filter.status = query.status;
     if (query.from || query.to) {
       filter.createdAt = {};
-      if (query.from) (filter.createdAt as any).$gte = new Date(query.from);
-      if (query.to) (filter.createdAt as any).$lte = new Date(query.to);
+      if (query.from) (filter.createdAt as { $gte?: Date }).$gte = new Date(query.from);
+      if (query.to) (filter.createdAt as { $lte?: Date }).$lte = new Date(query.to);
     }
-    const [items, total] = await Promise.all([
-      this.payments.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-      this.payments.countDocuments(filter),
-    ]);
-    return { data: items.map((row) => this.present(row)), meta: { page, limit, total } };
+    const term = query.q?.trim();
+    if (term) {
+      const pattern = new RegExp(escapeRegex(term), 'i');
+      const digits = term.replace(/\D/g, '');
+      const [people, shops, plans] = await Promise.all([
+        this.users.find({
+          $or: [
+            { name: pattern },
+            ...(digits.length >= 4 ? [{ phone: new RegExp(digits) }] : []),
+          ],
+        }).select('_id').lean(),
+        this.salons.find({ $or: [{ name: pattern }, { city: pattern }] }).select('_id').lean(),
+        this.plans.find({ name: pattern }).select('_id').lean(),
+      ]);
+      filter.$or = [
+        { userId: { $in: people.map((person) => person._id) } },
+        { salonId: { $in: shops.map((salon) => salon._id) } },
+        { planId: { $in: plans.map((plan) => plan._id) } },
+      ];
+    }
+    return filter;
   }
 
   private present(payment: any) {

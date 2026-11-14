@@ -9,6 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { hash } from 'bcryptjs';
 import { Model } from 'mongoose';
 import { pageArgs } from '../common/dto/page-query.dto';
+import { giveSalonPlatformDefault } from '../commissions/commission-rates';
 import { Role, SalonMemberRole, SalonStatus, UserStatus } from '../common/enums';
 import { AuthUser } from '../common/interfaces/auth-user';
 import { normalizePhone } from '../common/utils/phone';
@@ -29,6 +30,7 @@ export class SalonsService {
     @InjectModel('MembershipPlanItem') private readonly planItems: Model<MongoDoc>,
     @InjectModel('Review') private readonly reviews: Model<MongoDoc>,
     @InjectModel('AuditLog') private readonly audits: Model<MongoDoc>,
+    @InjectModel('CommissionRule') private readonly rules: Model<MongoDoc>,
     private readonly access: SalonAccessService,
   ) {}
 
@@ -225,6 +227,9 @@ export class SalonsService {
       entityId: salonId,
       metadata: { note: note ?? '' },
     });
+    if (status === SalonStatus.APPROVED) {
+      await giveSalonPlatformDefault(this.rules, this.audits, actor.sub, salonId);
+    }
     return toPublic(salon);
   }
 

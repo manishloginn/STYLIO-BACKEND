@@ -64,8 +64,8 @@ export class AdminController {
   }
 
   @Get('branches')
-  branchesList() {
-    return this.branches.listPending();
+  branchesList(@Query('status') status?: string) {
+    return this.branches.adminList(status);
   }
 
   @Post('branches/:id/decision')
@@ -132,6 +132,11 @@ export class AdminController {
     return this.commissions.listRules();
   }
 
+  @Get('commissions')
+  commissionsList() {
+    return this.commissions.listRecent();
+  }
+
   @Post('commission-rules')
   createRule(@CurrentUser() user: AuthUser, @Body() dto: CreateRuleDto) {
     return this.commissions.createRule(user, dto);
@@ -140,6 +145,11 @@ export class AdminController {
   @Get('reserves')
   reserves() {
     return this.payouts.listReserves();
+  }
+
+  @Get('payouts')
+  payoutsList() {
+    return this.payouts.listAll();
   }
 
   @Post('payouts')

@@ -39,6 +39,11 @@ export class PayoutsService {
     return rows.map((row) => toPublic(row));
   }
 
+  async listAll() {
+    const rows = await this.payouts.find().sort({ createdAt: -1 }).limit(100).lean();
+    return rows.map((row) => toPublic(row));
+  }
+
   async create(actor: AuthUser, dto: CreatePayoutDto) {
     return withTransaction(this.connection, async (session) => {
       const rows = await this.commissions

@@ -103,6 +103,8 @@ async function seed() {
   if (!rule) {
     await rules.create({
       salonId: null,
+      baseRateBps: 800,
+      middlemanRateBps: 0,
       rateBps: 800,
       effectiveFrom: new Date('2020-01-01'),
       status: 'ACTIVE',

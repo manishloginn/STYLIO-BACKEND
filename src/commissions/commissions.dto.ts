@@ -5,10 +5,27 @@ export class CreateRuleDto {
   @IsString()
   salonId?: string;
 
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(10_000)
-  rateBps!: number;
+  rateBps?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  baseRateBps?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  middlemanRateBps?: number;
+
+  @IsOptional()
+  @IsString()
+  middlemanId?: string;
 
   @IsISO8601()
   effectiveFrom!: string;

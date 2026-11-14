@@ -416,7 +416,7 @@ describe('critical flows', () => {
     const tooHigh = await request(server)
       .post(`/api/v1/admin/middlemen/${middlemanId}/mappings`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ salonId, agreedRateBps: 700 });
+      .send({ salonId, agreedRateBps: 9_500 });
     expect(tooHigh.status).toBe(400);
     const mapped = await request(server)
       .post(`/api/v1/admin/middlemen/${middlemanId}/mappings`)
@@ -458,17 +458,19 @@ describe('critical flows', () => {
     expect(await ledger.find({ paymentId: failedOrder.body.data.id }).lean()).toHaveLength(0);
     const earn = await ledger.findOne({ paymentId: paidOrder.body.data.id, entryType: 'EARN' }).lean();
     expect(await ledger.countDocuments({ paymentId: paidOrder.body.data.id })).toBe(1);
-    expect(earn?.salonRateBps).toBe(600);
+    expect(earn?.salonRateBps).toBe(900);
     expect(earn?.middlemanRateBps).toBe(300);
-    expect(earn?.salonCommissionPaise).toBe(60_000);
+    expect(earn?.salonCommissionPaise).toBe(90_000);
     expect(earn?.middlemanCommissionPaise).toBe(30_000);
-    expect(earn?.stylioCommissionPaise).toBe(30_000);
+    expect(earn?.stylioCommissionPaise).toBe(60_000);
     const commission = await app
       .get<Model<MongoDoc>>(getModelToken('Commission'))
       .findOne({ paymentId: paidOrder.body.data.id })
       .lean();
-    expect(commission?.commissionPaise).toBe(60_000);
-    expect(commission?.salonPayablePaise).toBe(940_000);
+    expect(commission?.baseRateBps).toBe(600);
+    expect(commission?.middlemanRateBps).toBe(300);
+    expect(commission?.commissionPaise).toBe(90_000);
+    expect(commission?.salonPayablePaise).toBe(910_000);
 
     const direct = await request(server)
       .post('/api/v1/memberships/direct')
@@ -482,10 +484,10 @@ describe('critical flows', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ paymentId: paidOrder.body.data.id, amount: 500_000, reason: 'Partial refund' });
     expect(partial.status).toBe(201);
-    expect(partial.body.data.commissionReversalPaise).toBe(30_000);
+    expect(partial.body.data.commissionReversalPaise).toBe(45_000);
     const afterPartial = await ledger.findOne({ paymentId: paidOrder.body.data.id, entryType: 'EARN' }).lean();
     expect(afterPartial?.middlemanReversedPaise).toBe(15_000);
-    expect(afterPartial?.stylioReversedPaise).toBe(15_000);
+    expect(afterPartial?.stylioReversedPaise).toBe(30_000);
     const rest = await request(server)
       .post('/api/v1/admin/refunds')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -493,7 +495,7 @@ describe('critical flows', () => {
     expect(rest.status).toBe(201);
     const afterFull = await ledger.findOne({ paymentId: paidOrder.body.data.id, entryType: 'EARN' }).lean();
     expect(afterFull?.middlemanReversedPaise).toBe(30_000);
-    expect(afterFull?.stylioReversedPaise).toBe(30_000);
+    expect(afterFull?.stylioReversedPaise).toBe(60_000);
 
     const second = await request(server)
       .post('/api/v1/admin/middlemen')
@@ -504,13 +506,10 @@ describe('critical flows', () => {
       .post(`/api/v1/admin/middlemen/${second.body.data.id}/mappings`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ salonId, agreedRateBps: 100 });
-    expect(reassigned.status).toBe(201);
+    expect(reassigned.status).toBe(400);
+    expect(reassigned.body.error.message).toMatch(/already has/);
     const unchanged = await ledger.findOne({ paymentId: paidOrder.body.data.id, entryType: 'EARN' }).lean();
     expect(unchanged?.middlemanId).toBe(middlemanId);
-    const audit = await request(server)
-      .get(`/api/v1/admin/middlemen/${middlemanId}/audit`)
-      .set('Authorization', `Bearer ${adminToken}`);
-    expect(audit.body.data.some((row: { action: string }) => row.action === 'MIDDLEMAN_MAPPING_ENDED')).toBe(true);
 
     await request(server)
       .post('/api/v1/admin/commission-rules')

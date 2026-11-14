@@ -38,6 +38,8 @@ export interface SaleSplitInput {
   salonRateBps: number;
   salonCommissionPaise: number;
   at: Date;
+  middlemanId?: string;
+  middlemanRateBps?: number;
 }
 
 export interface RefundSplitInput {
@@ -62,7 +64,28 @@ export class MiddlemenService {
 
   async list() {
     const rows = await this.middlemen.find().sort({ createdAt: -1 }).lean();
-    return rows.map((row) => toPublic(row));
+    const ids = rows.map((row) => row._id);
+    const mappings = ids.length
+      ? await this.mappings.find({ middlemanId: { $in: ids }, status: MappingStatus.ACTIVE }).lean()
+      : [];
+    const salonIds = [...new Set(mappings.map((mapping) => mapping.salonId).filter(Boolean))];
+    const salons = salonIds.length
+      ? await this.salons.find({ _id: { $in: salonIds } }).select('name city').lean()
+      : [];
+    const salonById = new Map(salons.map((salon) => [String(salon._id), salon]));
+    const links = new Map<string, Array<{ salonId: string; name: string; city: string; agreedRateBps: number }>>();
+    for (const mapping of mappings) {
+      const salon = salonById.get(String(mapping.salonId));
+      const current = links.get(String(mapping.middlemanId)) || [];
+      current.push({
+        salonId: mapping.salonId,
+        name: salon?.name || 'Salon',
+        city: salon?.city || '',
+        agreedRateBps: mapping.agreedRateBps,
+      });
+      links.set(String(mapping.middlemanId), current);
+    }
+    return rows.map((row) => ({ ...toPublic(row), salons: links.get(String(row._id)) || [] }));
   }
 
   async detail(id: string) {
@@ -99,8 +122,16 @@ export class MiddlemenService {
       action: 'MIDDLEMAN_CREATED',
       entityType: 'middleman',
       entityId: middleman._id,
-      metadata: { defaultRateBps: dto.defaultRateBps },
+      metadata: { defaultRateBps: dto.defaultRateBps, salonId: dto.salonId || null },
     });
+    if (dto.salonId) {
+      try {
+        await this.mapSalon(actor, middleman._id, { salonId: dto.salonId, agreedRateBps: dto.defaultRateBps });
+      } catch (error) {
+        await this.middlemen.deleteOne({ _id: middleman._id });
+        throw error;
+      }
+    }
     return toPublic(middleman);
   }
 
@@ -137,28 +168,17 @@ export class MiddlemenService {
       if (!rule) {
         throw new BadRequestException('Set a salon commission rate before mapping a middleman');
       }
-      if (dto.agreedRateBps > rule.rateBps) {
-        throw new BadRequestException('Middleman commission cannot exceed the salon commission rate');
+      const baseRateBps = this.keptBase(rule);
+      if (baseRateBps + dto.agreedRateBps > 10_000) {
+        throw new BadRequestException('Base plus middleman cannot exceed 100%');
       }
       const current = await this.mappings
         .findOne({ salonId: dto.salonId, status: MappingStatus.ACTIVE })
         .session(session);
       if (current) {
-        current.status = MappingStatus.ENDED;
-        current.effectiveTo = at;
-        current.endedBy = actor.sub;
-        await current.save({ session });
-        await this.audits.create(
-          [
-            {
-              actorId: actor.sub,
-              action: 'MIDDLEMAN_MAPPING_ENDED',
-              entityType: 'middleman_mapping',
-              entityId: current._id,
-              metadata: { salonId: dto.salonId, middlemanId: current.middlemanId, reason: 'REASSIGNED' },
-            },
-          ],
-          { session },
+        const owner = await this.middlemen.findById(current.middlemanId).session(session).select('name').lean();
+        throw new BadRequestException(
+          `${salon.name} already has ${owner?.name || 'a middleman'}. One salon can have only one middleman.`,
         );
       }
       const [mapping] = await this.mappings.create(
@@ -191,6 +211,7 @@ export class MiddlemenService {
         ],
         { session },
       );
+      await this.attachMiddlemanToRule(session, rule, dto.salonId, middlemanId, dto.agreedRateBps, actor.sub, at);
       return toPublic(mapping);
     });
   }
@@ -204,6 +225,7 @@ export class MiddlemenService {
     mapping.effectiveTo = new Date();
     mapping.endedBy = actor.sub;
     await mapping.save();
+    await this.releaseSalonRule(mapping.salonId, mapping.middlemanId);
     await this.audits.create({
       actorId: actor.sub,
       action: 'MIDDLEMAN_MAPPING_ENDED',
@@ -357,6 +379,9 @@ export class MiddlemenService {
       .session(session)
       .lean();
     if (existing) return existing;
+    if (input.middlemanId && (input.middlemanRateBps ?? 0) > 0) {
+      return this.recordLinkedSplit(session, input, input.middlemanId, input.middlemanRateBps ?? 0);
+    }
     const mapping = await this.mappings
       .findOne({
         salonId: input.salonId,
@@ -451,6 +476,129 @@ export class MiddlemenService {
       { session },
     );
     return adjustment;
+  }
+
+  private async attachMiddlemanToRule(
+    session: ClientSession,
+    rule: MongoDoc,
+    salonId: string,
+    middlemanId: string,
+    agreedRateBps: number,
+    actorId: string,
+    at: Date,
+  ) {
+    const baseRateBps = this.keptBase(rule);
+    const rateBps = baseRateBps + agreedRateBps;
+    if (rule.salonId) {
+      await this.rules.updateOne(
+        { _id: rule._id },
+        { $set: { middlemanId, baseRateBps, middlemanRateBps: agreedRateBps, rateBps } },
+        { session },
+      );
+      return;
+    }
+    await this.rules.create(
+      [
+        {
+          salonId,
+          middlemanId,
+          baseRateBps,
+          middlemanRateBps: agreedRateBps,
+          rateBps,
+          effectiveFrom: at,
+          status: RuleStatus.ACTIVE,
+          createdBy: actorId,
+        },
+      ],
+      { session },
+    );
+  }
+
+  private keptBase(rule: MongoDoc) {
+    if (rule.baseRateBps != null) return rule.baseRateBps;
+    return Math.max(0, rule.rateBps - (rule.middlemanRateBps ?? 0));
+  }
+
+  private async releaseSalonRule(salonId: string, middlemanId: string) {
+    const rule = await this.rules.findOne({ salonId, status: RuleStatus.ACTIVE, middlemanId });
+    if (!rule) return;
+    const base = this.keptBase(rule);
+    rule.baseRateBps = base;
+    rule.middlemanRateBps = 0;
+    rule.middlemanId = undefined;
+    rule.rateBps = base;
+    await rule.save();
+  }
+
+  private async recordLinkedSplit(session: ClientSession, input: SaleSplitInput, middlemanId: string, middlemanRateBps: number) {
+    const middleman = await this.middlemen.findById(middlemanId).session(session).lean();
+    if (!middleman || middleman.status !== MiddlemanStatus.ACTIVE) {
+      await this.noteSkippedSplit(session, input, middlemanId, middlemanRateBps, 'MIDDLEMAN_INACTIVE');
+      return null;
+    }
+    const share = quoteMiddlemanSplit({
+      amountPaise: input.amountPaise,
+      salonRateBps: input.salonRateBps,
+      middlemanRateBps,
+      salonCommissionPaise: input.salonCommissionPaise,
+    });
+    if (!share) {
+      await this.noteSkippedSplit(session, input, middlemanId, middlemanRateBps, 'RATE_EXCEEDS_SALON');
+      return null;
+    }
+    const [row] = await this.ledger.create(
+      [
+        {
+          paymentId: input.paymentId,
+          membershipId: input.membershipId,
+          salonId: input.salonId,
+          middlemanId,
+          entryType: CommissionEntryType.EARN,
+          salonRuleId: input.salonRuleId,
+          salonRateBps: input.salonRateBps,
+          middlemanRateBps,
+          grossPaise: input.amountPaise,
+          salonCommissionPaise: input.salonCommissionPaise,
+          middlemanCommissionPaise: share.middlemanCommissionPaise,
+          stylioCommissionPaise: share.stylioCommissionPaise,
+          middlemanReversedPaise: 0,
+          stylioReversedPaise: 0,
+          status: CommissionTxnStatus.PENDING,
+          idempotencyKey: `middleman:${input.paymentId}`,
+          settledWithEarn: false,
+        },
+      ],
+      { session },
+    );
+    return row;
+  }
+
+  private async noteSkippedSplit(
+    session: ClientSession,
+    input: SaleSplitInput,
+    middlemanId: string,
+    middlemanRateBps: number,
+    reason: string,
+  ) {
+    await this.audits.create(
+      [
+        {
+          actorId: 'system',
+          action: 'MIDDLEMAN_SPLIT_SKIPPED',
+          entityType: 'middleman',
+          entityId: middlemanId,
+          metadata: {
+            reason,
+            paymentId: input.paymentId,
+            salonId: input.salonId,
+            middlemanId,
+            agreedRateBps: middlemanRateBps,
+            salonRateBps: input.salonRateBps,
+          },
+        },
+      ],
+      { session },
+    );
   }
 
   private async skipSplit(session: ClientSession, mapping: MongoDoc, input: SaleSplitInput, reason: string) {

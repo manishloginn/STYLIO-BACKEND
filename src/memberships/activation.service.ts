@@ -11,6 +11,7 @@ import {
 } from '../common/enums';
 import { withTransaction } from '../common/transaction';
 import { percentPaise } from '../common/utils/money';
+import { snapshotRates } from '../commissions/commission-rates';
 import { toPublic } from '../common/utils/public';
 import { entitlementDrafts, PlanItemShape } from '../entitlements/entitlement.engine';
 import { MiddlemenService } from '../middlemen/middlemen.service';
@@ -193,7 +194,12 @@ export class ActivationService {
       if (source === AttributionSource.STYLIO) {
         const rule = await this.findRule(plan.salonId, now, active);
         if (rule) {
-          const commissionPaise = percentPaise(payment.amount, rule.rateBps);
+          const rates = snapshotRates({
+            rateBps: rule.rateBps,
+            baseRateBps: rule.baseRateBps,
+            middlemanRateBps: rule.middlemanRateBps,
+          });
+          const commissionPaise = percentPaise(payment.amount, rates.rateBps);
           await this.commissions.create(
             [
               {
@@ -201,7 +207,10 @@ export class ActivationService {
                 membershipId: membership._id,
                 salonId: plan.salonId,
                 ruleId: rule._id,
-                rateBps: rule.rateBps,
+                middlemanId: rule.middlemanId || undefined,
+                baseRateBps: rates.baseRateBps,
+                middlemanRateBps: rates.middlemanRateBps,
+                rateBps: rates.rateBps,
                 commissionPaise,
                 salonPayablePaise: payment.amount - commissionPaise,
                 reversedPaise: 0,
@@ -217,6 +226,8 @@ export class ActivationService {
             salonRuleId: rule._id,
             salonRateBps: rule.rateBps,
             salonCommissionPaise: commissionPaise,
+            middlemanId: rule.middlemanId || undefined,
+            middlemanRateBps: rates.middlemanRateBps,
             at: now,
           });
         }

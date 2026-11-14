@@ -185,6 +185,9 @@ PaymentSchema.index({ gatewayOrderId: 1 }, { unique: true, sparse: true });
 export const CommissionRuleSchema = uuidSchema(
   {
     salonId: { type: String },
+    middlemanId: { type: String },
+    baseRateBps: { type: Number },
+    middlemanRateBps: { type: Number },
     rateBps: { type: Number, required: true },
     effectiveFrom: { type: Date, required: true },
     effectiveTo: { type: Date },
@@ -201,6 +204,9 @@ export const CommissionSchema = uuidSchema(
     membershipId: { type: String, required: true },
     salonId: { type: String, required: true, index: true },
     ruleId: { type: String, required: true },
+    middlemanId: { type: String },
+    baseRateBps: { type: Number },
+    middlemanRateBps: { type: Number },
     rateBps: { type: Number, required: true },
     commissionPaise: { type: Number, required: true },
     salonPayablePaise: { type: Number, required: true },
